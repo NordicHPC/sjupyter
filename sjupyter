@@ -78,17 +78,11 @@ parser_outer.add_argument("-l", "--list", action="store_true",
                           help="List currently running notebooks.  The jupyter"
                           " equivalent doesn't work and may wipe running"
                           " notebooks!")
+parser_outer.add_argument("--lab", action="store_true",
+                          help="start JupyterLab instead of Notebook.")
 parser_outer.add_argument("-v", "--verbose", action="store_true",
                           help="Verbose.")
-
-# These arguments are parsed but passed on to srun.
-parser_inner = argparse.ArgumentParser()
-
 args, remaining        = parser_outer.parse_known_args()
-args_inner, remaining2 = parser_inner.parse_known_args()
-
-if args.verbose: print(args, remaining)
-if args.verbose: print(args_inner, remaining2)
 
 #
 # Basic setup
@@ -163,7 +157,7 @@ if args.internal or args.local:
 ********************"""%dict(locals()))
 
     os.environ.pop('XDG_RUNTIME_DIR', None)
-    cmd = ["jupyter", "notebook", "--no-browser",
+    cmd = ["jupyter", "lab" if args.lab else "notebook", "--no-browser",
                "--port=%d"%port,
                "--ip=%s"%hostname]
     cmd += remaining
@@ -213,6 +207,8 @@ if args.cluster:
     cmd_jupyter.append('--cluster')
 if args.verbose:
     cmd_jupyter.append('--verbose')
+if args.lab:
+    cmd_jupyter.append('--lab')
 
 if '--' in remaining:
     split_idx = remaining.index('--')
