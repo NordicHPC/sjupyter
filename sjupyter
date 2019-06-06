@@ -1,0 +1,223 @@
+#!/usr/bin/env python
+
+"""Automatic jupyter running within slurm.
+
+Run sjupyter to start a notebook on remote server.  There are various
+options that control jupyter, for example pass --cluster in order to
+start an ipython cluster which uses the slurm CPUs.
+
+- Expects a "jupyter" executable to be on PATH, if not, then
+  automatically load DEFAULT_MODULE (=anaconda3)
+
+
+Notes:
+
+* in order for "jupyter notebook list" to work, you must unset
+XDG_RUNTIME_DIR.
+
+
+"""
+
+from __future__ import print_function
+
+import argparse
+import os
+import socket
+import subprocess
+import time
+
+DEFAULT_MODULE = "jupyterhub/live"
+CLUSTER_NAME = 'triton'
+CLUSTER_SSH = 'username@triton.aalto.fi'
+CLUSTER_INTERNAL_PATTERN = '*int.triton.aalto.fi*'
+CLUSTER_NETWORK_CONNECT = """
+* If you can not connect directly to %(CLUSTER_SSH)s (you are not in Aalto
+* networks), add this to ssh command:
+*  -o ProxyCommand='ssh user@kosh.aalto.fi -W %%h:%%p'
+"""
+if 'LMOD_PKG' in os.environ:
+    MODULE_INIT = os.environ['LMOD_PKG']+ "/init/env_modules_python.py"
+# Pick random port for jupyter.  It's OK if we have collisions,
+# jupyter tries many ports starting at this one.
+JPORT = (os.getuid() % 63300) + 2048
+# Find this binary's path.  Follow symlinks, so we go from local disk
+# bin to NFS path guarenteed to be available on all nodes.
+SJUPYTER_EXECUTABLE = os.path.abspath(__file__)
+if os.path.islink(SJUPYTER_EXECUTABLE):
+    SJUPYTER_EXECUTABLE = os.path.realpath(SJUPYTER_EXECUTABLE)
+
+
+
+# These arguments are used and consumed by the outer script.  Anything
+# that is not listed here is passed to the srun command.  Things which
+# need to be passed to the internal jupyter command have to be
+# captured here and then re-added to the command at the bottom
+# (example: --cluster)
+parser_outer = argparse.ArgumentParser(usage=__file__+" [args] [srun-args] [-- [jupyter-args]]")
+parser_outer.add_argument("--internal", action='store_true',
+                          help="Do not use (runs in batch)")
+parser_outer.add_argument("--local", action='store_true',
+                          help="Don't run in slurm, just run here.")
+parser_outer.add_argument("--cluster", action='store_true',
+                          help="Start ipython cluster, considers slurm -c option. (not implemented)")
+parser_outer.add_argument("--jupyter-arg",
+                          help="Argument to pass to jupyter (not implemented)")
+parser_outer.add_argument("-p", "--partition", default="interactive",
+                          help="slurm partition to use, default=interactive")
+parser_outer.add_argument("-l", "--list", action="store_true",
+                          help="List currently running notebooks.  The jupyter"
+                          " equivalent doesn't work and may wipe running"
+                          " notebooks!")
+parser_outer.add_argument("-v", "--verbose", action="store_true",
+                          help="Verbose.")
+
+# These arguments are parsed but passed on to srun.
+parser_inner = argparse.ArgumentParser()
+
+args, remaining        = parser_outer.parse_known_args()
+args_inner, remaining2 = parser_inner.parse_known_args()
+
+if args.verbose: print(args, remaining)
+if args.verbose: print(args_inner, remaining2)
+
+#
+# Basic setup
+#
+# Does jupyter exist on the path?
+ret = subprocess.call(["which", "jupyter"], stdout=open("/dev/null", 'w'), stderr=subprocess.STDOUT)
+if ret != 0:
+    print("INFO: jupyter is not in PATH, loading default jupyter from %s"%DEFAULT_MODULE)
+    # Load module using native Python support.
+    exec(compile(open(MODULE_INIT).read(), MODULE_INIT, 'exec'))
+    module('load', DEFAULT_MODULE)
+    # Check again.  Is it really loaded?
+    ret = subprocess.call(["which", "jupyter"], stdout=open("/dev/null", 'w'), stderr=subprocess.STDOUT)
+    if ret != 0:
+        print("ERROR: could not load a working jupyter")
+        exit(1)
+
+
+
+#
+# Internal script: start jupyter inside of a slurm task
+#
+if args.internal or args.local:
+    hostname = socket.getfqdn()
+
+    if args.cluster:
+        n_cpus = int(os.environ['SLURM_CPUS_ON_NODE'])
+        print("N cpus:", n_cpus)
+        #srun ipcluster start --n=n_cpus
+        print("Waiting 20 seconds for cluster to start...")
+        time.sleep(20)
+
+    # Find free port.
+    for port in range(JPORT, JPORT+100):
+        if args.verbose: print("Trying port %d"%port)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind((hostname, port))
+        except (OSError, socket.error):
+            sock.close()
+            continue
+        # available
+        sock.close()
+        if args.verbose: print("Found port %d"%port)
+        break
+    else:
+        print("ERROR: could not find free port.")
+        exit(1)
+
+
+    print("""\
+********************
+* Starting jupyter.  To cancel, C-c C-c twice within one second (to kill
+* srun).
+*
+* You now need to connect to the jupyter  The direct way: ssh to
+* %(CLUSTER_NAME)s with
+*   ssh -L %(port)d:%(hostname)s:%(port)d %(CLUSTER_SSH)s
+* and use the URL below, but change %(hostname)s to localhost
+*
+* Even better, use SSH proxy:
+*   'ssh -D 8123 %(CLUSTER_SSH)s'
+* For Firefox, install the extension FoxyProxy Standard,
+* Set up a new proxy rule for the pattern %(CLUSTER_INTERNAL_PATTERN)s, using
+*   localhost:8123 type SOCKS5,
+* Now any %(CLUSTER_NAME)s jupyter URLs automatically go to your notebook!
+* OR:
+* Create a new browser instance,
+* Change the proxy of that browser to localhost:8123, SOCKS5,
+* Connect to jupyter using the exact URL that is printed below.
+* %(CLUSTER_NETWORK_CONNECT)s
+********************"""%dict(port=port, hostname=hostname))
+
+    os.environ.pop('XDG_RUNTIME_DIR', None)
+    cmd = ["jupyter", "notebook", "--no-browser",
+               "--port=%d"%port,
+               "--ip=%s"%hostname]
+    cmd += remaining
+    if args.verbose: print(cmd)
+    os.execvp(cmd[0], cmd)
+
+
+
+#
+# List running notebook servers.  We have to unset XDG_RUNTIME_DIR
+# since it is unset when the notebooks are started, and this end su
+# pbeing used to store the running server list.
+#
+if args.list or (remaining and remaining[0] == 'list'):
+    # The following does NOT work because it wipes the dierctory:
+    #del os.environ['XDG_RUNTIME_DIR']
+    ##os.execvpe('jupyter', ['jupyter', 'notebook', 'list'], env=os.environ)
+    #subprocess.call(['jupyter', 'notebook', 'list'])
+
+    # We have to re-implement this because "jupyter notebook list"
+    # will wipe things on other machines.
+    import glob
+    import json
+    files = glob.glob(os.path.expanduser('~/.local/share/jupyter/runtime/nbserver-*.json'))
+    print("Currently running servers:")
+    for fname in files:
+        nbdata = json.load(open(fname))
+        print("%(url)s?token=%(token)s :: %(notebook_dir)s"%nbdata)
+    exit(0)
+
+
+
+#
+# Outer wrapper: This does the submiting of the job to slurm.
+#
+
+#grep -E 'c.NotebookApp.password.*=.*.{10,}' ~/.jupyter/jupyter_notebook_config.py
+
+# Start srun with remaining command line parameters, execute same
+# script with --internal parameter.
+cmd_srun = ['srun', '--pty', ]
+cmd_srun.append('--partition='+args.partition)
+
+cmd_jupyter = [SJUPYTER_EXECUTABLE, '--internal']
+
+if args.cluster:
+    cmd_jupyter.append('--cluster')
+if args.verbose:
+    cmd_jupyter.append('--verbose')
+
+if '--' in remaining:
+    split_idx = remaining.index('--')
+    cmd_srun += remaining[:split_idx]
+    cmd_jupyter += remaining[split_idx+1:]
+else:
+    cmd_srun += remaining
+
+
+
+# XDG_RUNTIME_DIR isn't valid on run host
+del os.environ['XDG_RUNTIME_DIR']
+if args.verbose: print(cmd_srun + cmd_jupyter)
+os.execvp(cmd_srun[0], cmd_srun + cmd_jupyter)
+
+
+#srun --pty $* jupyter notebook --port=$PORT --ip='*' --debug --no-browser
+
