@@ -6,6 +6,10 @@ hints on connecting (since that's usually the hardest part).  [Example
 user instructions](https://scicomp.aalto.fi/triton/apps/sjupyter.html)
 which could be moved to here.
 
+If you have a HPC JupyterHub, this module has very little use (only
+allowing users to run their own Jupyter in other partitions beyond
+what you support through the hub).
+
 This module does:
 
 - if the `jupyter` command is not in `PATH`, load some configurable
