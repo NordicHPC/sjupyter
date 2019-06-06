@@ -47,6 +47,16 @@ if os.path.islink(SJUPYTER_EXECUTABLE):
     SJUPYTER_EXECUTABLE = os.path.realpath(SJUPYTER_EXECUTABLE)
 
 
+# Load config from same path as this file, if it exists
+CONFIG_PATH = SJUPYTER_EXECUTABLE+ '.conf'
+if os.path.isfile(CONFIG_PATH):
+    exec(open(CONFIG_PATH).read())
+# load config from /etc or NHPC_CONFIG, if it exists
+CONFIG_PATH = os.environ.get('NHPC_CONFIG', '/etc') + '/sjupyter.conf'
+if os.path.isfile(CONFIG_PATH):
+    exec(open(CONFIG_PATH).read())
+
+
 
 # These arguments are used and consumed by the outer script.  Anything
 # that is not listed here is passed to the srun command.  Things which
