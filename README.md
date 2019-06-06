@@ -2,7 +2,9 @@
 
 This doesn't do anything fancy, but makes the running of a Jupyter
 notebook server in a Slurm queue a one-command process, and prints
-hints on connecting (since that's usually the hardest part).
+hints on connecting (since that's usually the hardest part).  [Example
+user instructions](https://scicomp.aalto.fi/triton/apps/sjupyter.html)
+which could be moved to here.
 
 This module does:
 
@@ -22,6 +24,34 @@ This module does:
     know the host/port (and without changing system default proxy).
 
   - Prints the ssh command to set up the proxy.
+
+To clarify, this is the message it prints after typing `srun` with no
+arguments (it could be improved, may be different in the current
+code):
+
+```
+********************
+* Starting jupyter.  To cancel, C-c C-c twice within one second (to kill
+* srun).
+*
+* You now need to connect to the jupyter  The direct way: ssh to
+* %(CLUSTER_NAME)s with
+*   ssh -L %(port)d:%(hostname)s:%(port)d %(CLUSTER_SSH)s
+* and use the URL below, but change %(hostname)s to localhost
+*
+* Even better, use SSH proxy:
+*   'ssh -D 8123 %(CLUSTER_SSH)s'
+* For Firefox, install the extension FoxyProxy Standard,
+* Set up a new proxy rule for the pattern %(CLUSTER_INTERNAL_PATTERN)s, using
+*   localhost:8123 type SOCKS5,
+* Now any %(CLUSTER_NAME)s jupyter URLs automatically go to your notebook!
+* OR:
+* Create a new browser instance,
+* Change the proxy of that browser to localhost:8123, SOCKS5,
+* Connect to jupyter using the exact URL that is printed below.
+* %(CLUSTER_NETWORK_CONNECT)s
+********************
+```
 
 
 
