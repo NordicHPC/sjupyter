@@ -160,7 +160,7 @@ if args.internal or args.local:
 * Change the proxy of that browser to localhost:8123, SOCKS5,
 * Connect to jupyter using the exact URL that is printed below.
 * %(CLUSTER_NETWORK_CONNECT)s
-********************"""%dict(port=port, hostname=hostname))
+********************"""%dict(locals()))
 
     os.environ.pop('XDG_RUNTIME_DIR', None)
     cmd = ["jupyter", "notebook", "--no-browser",
